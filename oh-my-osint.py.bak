@@ -1,0 +1,132 @@
+# oh_my_osint_llm_api.py
+import streamlit as st
+import subprocess
+import os
+import json
+import shutil
+import requests
+from dotenv import load_dotenv
+import google.generativeai as genai
+
+# --- Load environment variables from .env ---
+load_dotenv()
+genai_api_key = os.getenv("GOOGLE_API_KEY")
+ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY")
+SHODAN_API_KEY = os.getenv("SHODAN_API_KEY")
+
+# --- Configure Gemini ---
+genai.configure(api_key=genai_api_key)
+model = genai.GenerativeModel("gemini-pro")
+
+# --- Gemini selects tools and APIs ---
+def ask_gemini_for_tools(target_type, target_value):
+    prompt = f"""
+You are an OSINT analyst assistant.
+The user wants to investigate the following:
+Target type: {target_type}
+Target value: {target_value}
+
+Available CLI tools:
+- theHarvester
+- sherlock
+- holehe
+- pwned
+- socialscan
+- amass
+- sublist3r
+- dnsrecon
+- waybackurls
+
+Available free APIs:
+- crt.sh (cert search)
+- ipinfo.io (IP geolocation)
+- AbuseIPDB (IP reputation)
+- viewdns.info (whois, reverse IP)
+- shodan.io (IP exposure)
+
+Select the most relevant tools and APIs. Return a JSON array of objects with:
+- name
+- type (cli or api)
+- command (for CLI) or url (for API)
+- reason
+Use {target} as placeholder.
+"""
+    response = model.generate_content(prompt)
+    try:
+        text = response.text.strip()
+        json_text = text[text.find("["):text.rfind("]") + 1]
+        return json.loads(json_text)
+    except Exception as e:
+        st.error(f"Gemini JSON parse error: {e}")
+        return []
+
+# --- API Call Handlers ---
+def call_api(name, url, target):
+    url = url.replace("{target}", target)
+    try:
+        if name == "AbuseIPDB":
+            headers = {"Key": ABUSEIPDB_API_KEY, "Accept": "application/json"}
+            r = requests.get(url, headers=headers)
+        elif name == "shodan.io":
+            url = f"https://api.shodan.io/shodan/host/{target}?key={SHODAN_API_KEY}"
+            r = requests.get(url)
+        else:
+            r = requests.get(url)
+        if r.status_code == 200:
+            return r.text
+        return f"API Error ({r.status_code}): {r.text}"
+    except Exception as e:
+        return f"API Exception: {e}"
+
+# --- Streamlit UI ---
+st.set_page_config("LLM-Orchestrated OSINT", layout="wide")
+st.title("🕵️‍ Gemini-Decided OSINT Recon")
+
+target_type = st.selectbox("Target Type", ["username", "email", "domain", "IP address", "phone number"])
+target_value = st.text_input(f"Enter {target_type}")
+
+if target_value:
+    with st.spinner("🔍 Gemini deciding best tools and APIs..."):
+        selected_items = ask_gemini_for_tools(target_type, target_value)
+
+    tool_outputs = []
+
+    for item in selected_items:
+        st.markdown(f"### {item['name']} ({item['type']})")
+        command_or_url = item.get("command") or item.get("url")
+
+        if item['type'] == "cli":
+            command = command_or_url.replace("{target}", target_value)
+            try:
+                result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
+                output = result.stdout or result.stderr or "No output"
+                st.code(output, language="bash")
+                tool_outputs.append({"tool": item['name'], "output": output})
+            except Exception as e:
+                st.error(f"❌ CLI tool error: {e}")
+        elif item['type'] == "api":
+            output = call_api(item['name'], command_or_url, target_value)
+            st.code(output, language="json")
+            tool_outputs.append({"tool": item['name'], "output": output})
+
+    if tool_outputs:
+        st.subheader("📋 Gemini Analysis Report")
+        all_outputs_text = "\n\n".join(f"### {o['tool']}\n{o['output']}" for o in tool_outputs)
+
+        summary_prompt = f"""
+You are an expert OSINT analyst.
+Summarise the following tool outputs into an intelligence report:
+- Group related information.
+- Highlight IOCs (IPs, domains, usernames).
+- Suggest next steps or pivots.
+- Respond in markdown.
+
+{all_outputs_text}
+"""
+        try:
+            response = model.generate_content(summary_prompt)
+            st.markdown(response.text)
+        except Exception as e:
+            st.error(f"Gemini summarisation error: {e}")
+
+st.warning("⚠ For lawful use only. This app runs real tools and APIs against live targets.")

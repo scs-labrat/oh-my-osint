@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+.env
+
+# Virtualenv
+.osint/
+.venv/
+venv/
+ENV/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OSINT-specific
+sherlock/
+*.db
+*.log
+output/
+twint/
+phoneinfoga/
