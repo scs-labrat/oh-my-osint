@@ -124,3 +124,8 @@ Built by [@scs-labrat](https://github.com/scs-labrat) with inspiration from the 
 [MIT License](LICENSE)
 
 ```
+
+## TO DO
+- create option to plug in new apis and tools
+- stop trash output if tool fails
+- perhaps use leaner model for initial tool selection to speed up process?
